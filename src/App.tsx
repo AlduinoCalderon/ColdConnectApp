@@ -1,11 +1,8 @@
-import React, { useEffect, useState, useCallback } from 'react';
-import { GoogleMap, useJsApiLoader, Marker, InfoWindow } from '@react-google-maps/api';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
+import { GoogleMap, useJsApiLoader, Marker, InfoWindow, DirectionsRenderer } from '@react-google-maps/api';
 import { Warehouse } from './types/warehouse';
-import { api } from './services/api';
+import { getWarehouses } from './services/api';
 import './App.css';
-
-// API URL desde el archivo .env
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
 
 // Centro por defecto (caso que no se permita geolocalización)
 const defaultCenter = {
@@ -33,70 +30,156 @@ function App(): React.JSX.Element {
   const [selectedWarehouse, setSelectedWarehouse] = useState<Warehouse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [mapLoaded, setMapLoaded] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const [directions, setDirections] = useState<google.maps.DirectionsResult | null>(null);
+  const mapRef = useRef<google.maps.Map | null>(null);
 
   // Cargar la API de Google Maps
-  const { isLoaded } = useJsApiLoader({
+  const { isLoaded, loadError } = useJsApiLoader({
     id: 'google-map-script',
-    googleMapsApiKey: 'AIzaSyBDaeWicvigtP9xPv919E-RNoxfvC-Hqik' // Tu API key de Google Maps
+    googleMapsApiKey: import.meta.env.VITE_GOOGLE_MAPS_API_KEY,
+    libraries: ['places', 'directions']
   });
 
-  // Obtener la ubicación del usuario
+  // Obtener la ubicación del usuario y los almacenes
   useEffect(() => {
-    requestLocationPermission();
-    fetchWarehouses();
+    const initializeApp = async () => {
+      try {
+        setIsLoading(true);
+        await requestLocationPermission();
+        await fetchWarehouses();
+      } catch (error) {
+        console.error('Error initializing app:', error);
+        setError('Error al inicializar la aplicación: ' + (error as Error).message);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    initializeApp();
   }, []);
 
   const requestLocationPermission = () => {
-    if ('geolocation' in navigator) {
-      navigator.geolocation.getCurrentPosition(
-        (position) => {
-          setUserLocation({
-            lat: position.coords.latitude,
-            lng: position.coords.longitude
-          });
-        },
-        (error) => {
-          setError('Error al obtener la ubicación: ' + error.message);
-          // Usar ubicación por defecto
-          setUserLocation(defaultCenter);
-        }
-      );
-    } else {
-      setError('La geolocalización no está soportada en este navegador');
-      // Usar ubicación por defecto
-      setUserLocation(defaultCenter);
-    }
+    return new Promise<void>((resolve, reject) => {
+      if ('geolocation' in navigator) {
+        navigator.geolocation.getCurrentPosition(
+          (position) => {
+            setUserLocation({
+              lat: position.coords.latitude,
+              lng: position.coords.longitude
+            });
+            resolve();
+          },
+          (error) => {
+            setError('Error al obtener la ubicación: ' + error.message);
+            setUserLocation(defaultCenter);
+            resolve();
+          }
+        );
+      } else {
+        setError('La geolocalización no está soportada en este navegador');
+        setUserLocation(defaultCenter);
+        resolve();
+      }
+    });
   };
 
   const fetchWarehouses = async () => {
     try {
-      const data = await api.getWarehouses();
-      // Convertir el formato de las coordenadas para Google Maps
-      const formattedWarehouses = data.map(warehouse => ({
-        ...warehouse,
-        position: {
-          lat: warehouse.latitude,
-          lng: warehouse.longitude
-        }
-      }));
-      setWarehouses(formattedWarehouses);
+      const data = await getWarehouses();
+      if (Array.isArray(data)) {
+        // Ordenar almacenes por distancia
+        const sortedWarehouses = data.sort((a, b) => {
+          const distanceA = calculateDistance(
+            userLocation.lat,
+            userLocation.lng,
+            a.location.y,
+            a.location.x
+          );
+          const distanceB = calculateDistance(
+            userLocation.lat,
+            userLocation.lng,
+            b.location.y,
+            b.location.x
+          );
+          return distanceA - distanceB;
+        });
+        setWarehouses(sortedWarehouses);
+      } else {
+        setError('Error: Los datos de los almacenes no son válidos');
+      }
     } catch (error) {
-      setError('Error al cargar los almacenes');
       console.error('Error fetching warehouses:', error);
+      setError('Error al cargar los almacenes: ' + (error as Error).message);
     }
   };
 
-  const onMapLoad = useCallback(() => {
+  const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: number): number => {
+    const R = 6371; // Radio de la Tierra en km
+    const dLat = toRad(lat2 - lat1);
+    const dLon = toRad(lon2 - lon1);
+    const a = 
+      Math.sin(dLat/2) * Math.sin(dLat/2) +
+      Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * 
+      Math.sin(dLon/2) * Math.sin(dLon/2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    return R * c;
+  };
+
+  const toRad = (value: number): number => {
+    return value * Math.PI / 180;
+  };
+
+  const onMapLoad = useCallback((map: google.maps.Map) => {
+    mapRef.current = map;
     setMapLoaded(true);
   }, []);
 
-  const handleMarkerClick = (warehouse: Warehouse) => {
+  const handleMarkerClick = async (warehouse: Warehouse) => {
     setSelectedWarehouse(warehouse);
+    setDirections(null);
+
+    if (mapRef.current) {
+      const directionsService = new google.maps.DirectionsService();
+      const origin = new google.maps.LatLng(userLocation.lat, userLocation.lng);
+      const destination = new google.maps.LatLng(warehouse.location.y, warehouse.location.x);
+
+      try {
+        const result = await directionsService.route({
+          origin,
+          destination,
+          travelMode: google.maps.TravelMode.DRIVING,
+        });
+        setDirections(result);
+      } catch (error) {
+        console.error('Error al calcular la ruta:', error);
+        setError('Error al calcular la ruta');
+      }
+    }
   };
 
   const handleInfoWindowClose = () => {
     setSelectedWarehouse(null);
+    setDirections(null);
   };
+
+  if (isLoading) {
+    return (
+      <div className="loading-screen">
+        <div className="loading-spinner"></div>
+        <p>Cargando aplicación...</p>
+      </div>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <div className="error-screen">
+        <h2>Error al cargar Google Maps</h2>
+        <p>{loadError.message}</p>
+      </div>
+    );
+  }
 
   return (
     <div className="app">
@@ -123,8 +206,8 @@ function App(): React.JSX.Element {
             {/* Marcadores de los almacenes */}
             {warehouses.map((warehouse) => (
               <Marker
-                key={warehouse.id}
-                position={{ lat: warehouse.latitude, lng: warehouse.longitude }}
+                key={warehouse.warehouseId}
+                position={{ lat: warehouse.location.y, lng: warehouse.location.x }}
                 onClick={() => handleMarkerClick(warehouse)}
               />
             ))}
@@ -132,22 +215,20 @@ function App(): React.JSX.Element {
             {/* Ventana de información al hacer clic en un marcador */}
             {selectedWarehouse && (
               <InfoWindow
-                position={{ lat: selectedWarehouse.latitude, lng: selectedWarehouse.longitude }}
+                position={{ lat: selectedWarehouse.location.y, lng: selectedWarehouse.location.x }}
                 onCloseClick={handleInfoWindowClose}
               >
                 <div className="info-window">
                   <h3>{selectedWarehouse.name}</h3>
                   <p>{selectedWarehouse.address}</p>
                   <p>Estado: {selectedWarehouse.status}</p>
-                  {selectedWarehouse.temperature && (
-                    <p>Temperatura: {selectedWarehouse.temperature}°C</p>
-                  )}
-                  {selectedWarehouse.humidity && (
-                    <p>Humedad: {selectedWarehouse.humidity}%</p>
-                  )}
+                  <p>Unidades disponibles: {selectedWarehouse.storageUnits.filter(u => u.status === 'available').length}</p>
                 </div>
               </InfoWindow>
             )}
+
+            {/* Renderizar la ruta */}
+            {directions && <DirectionsRenderer directions={directions} />}
           </GoogleMap>
         ) : (
           <div className="loading-map">Cargando mapa...</div>
@@ -160,23 +241,27 @@ function App(): React.JSX.Element {
           {warehouses.length === 0 ? (
             <p>Cargando almacenes...</p>
           ) : (
-            warehouses.map((warehouse) => (
-              <div
-                key={warehouse.id}
-                className={`warehouse-item ${selectedWarehouse?.id === warehouse.id ? 'selected' : ''}`}
-                onClick={() => handleMarkerClick(warehouse)}
-              >
-                <h3>{warehouse.name}</h3>
-                <p>{warehouse.address}</p>
-                <p>Estado: {warehouse.status}</p>
-                {warehouse.temperature && (
-                  <p>Temperatura: {warehouse.temperature}°C</p>
-                )}
-                {warehouse.humidity && (
-                  <p>Humedad: {warehouse.humidity}%</p>
-                )}
-              </div>
-            ))
+            warehouses.map((warehouse) => {
+              const distance = calculateDistance(
+                userLocation.lat,
+                userLocation.lng,
+                warehouse.location.y,
+                warehouse.location.x
+              );
+              return (
+                <div
+                  key={warehouse.warehouseId}
+                  className={`warehouse-item ${selectedWarehouse?.warehouseId === warehouse.warehouseId ? 'selected' : ''}`}
+                  onClick={() => handleMarkerClick(warehouse)}
+                >
+                  <h3>{warehouse.name}</h3>
+                  <p>{warehouse.address}</p>
+                  <p>Estado: {warehouse.status}</p>
+                  <p>Distancia: {distance.toFixed(1)} km</p>
+                  <p>Unidades disponibles: {warehouse.storageUnits.filter(u => u.status === 'available').length}</p>
+                </div>
+              );
+            })
           )}
         </div>
       </div>
