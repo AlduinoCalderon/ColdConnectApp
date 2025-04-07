@@ -1,0 +1,114 @@
+.app {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  padding: 1rem;
+  gap: 1rem;
+  background-color: var(--background-color);
+}
+
+.error-message {
+  background-color: var(--error-color);
+  color: white;
+  padding: 1rem;
+  border-radius: var(--border-radius);
+  margin-bottom: 1rem;
+}
+
+.map-container {
+  flex: 2;
+  min-height: 400px;
+  background-color: white;
+  border-radius: var(--border-radius);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  overflow: hidden;
+  position: relative;
+}
+
+/* Asegurarse de que el contenedor del mapa tenga altura */
+.map-container .leaflet-container {
+  height: 100%;
+  width: 100%;
+  z-index: 1;
+}
+
+.loading-map {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--text-color);
+}
+
+.list-container {
+  flex: 1;
+  background-color: white;
+  border-radius: var(--border-radius);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  padding: 1rem;
+  overflow-y: auto;
+}
+
+.list-container h2 {
+  color: var(--primary-color);
+  margin-bottom: 1rem;
+}
+
+.warehouse-list {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+}
+
+.warehouse-item {
+  background-color: var(--background-color);
+  padding: 1rem;
+  border-radius: var(--border-radius);
+  cursor: pointer;
+  transition: transform 0.2s ease-in-out, box-shadow 0.2s ease-in-out;
+}
+
+.warehouse-item:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+}
+
+.warehouse-item.selected {
+  border: 2px solid var(--primary-color);
+}
+
+.warehouse-item h3 {
+  color: var(--primary-color);
+  margin-bottom: 0.5rem;
+}
+
+.warehouse-item p {
+  color: var(--text-color);
+  margin-bottom: 0.25rem;
+}
+
+/* Responsive Design */
+@media (min-width: 768px) {
+  .app {
+    flex-direction: row;
+  }
+  
+  .map-container {
+    flex: 2;
+  }
+  
+  .list-container {
+    flex: 1;
+    max-width: 400px;
+  }
+}
+
+@media (max-width: 767px) {
+  .warehouse-list {
+    grid-template-columns: 1fr;
+  }
+  
+  .map-container {
+    min-height: 300px;
+  }
+} 
